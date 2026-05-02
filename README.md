@@ -286,10 +286,6 @@ CipherDev is certified by IBM Bob for zero data transmission. See `bob_sessions/
 
 Contributions are welcome! Please read our contributing guidelines before submitting PRs.
 
-## 📄 License
-
-MIT License - see LICENSE file for details
-
 ## 🙏 Acknowledgments
 
 - **@mlc-ai/web-llm** - WebGPU inference engine

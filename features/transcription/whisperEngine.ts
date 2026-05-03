@@ -9,6 +9,8 @@ export class WhisperEngine {
   private pipeline: Pipeline | null = null;
   private loadedModelId: string | null = null;
   private isProcessing: boolean = false;
+  // Serial queue so concurrent transcribe calls run one-at-a-time instead of throwing.
+  private queue: Promise<unknown> = Promise.resolve();
 
   /**
    * Load Whisper model
@@ -31,10 +33,9 @@ export class WhisperEngine {
         progress: 0,
       });
 
-      // Map our model IDs to HuggingFace model IDs
-      // Using multilingual models (no .en suffix) for broader language support
+      // Map our model IDs to HuggingFace model IDs.
+      // Multilingual models (no .en suffix) for broader language support.
       const modelMap: Record<string, string> = {
-        'whisper-large-v3-turbo': 'Xenova/whisper-small', // Fallback to small (multilingual)
         'whisper-base': 'Xenova/whisper-base',
         'whisper-small': 'Xenova/whisper-small',
         'whisper-tiny': 'Xenova/whisper-tiny',
@@ -86,7 +87,7 @@ export class WhisperEngine {
   }
 
   /**
-   * Transcribe audio blob to text
+   * Transcribe a Blob (e.g. full recording on stop) by decoding to PCM first.
    */
   async transcribe(
     audioBlob: Blob,
@@ -96,70 +97,92 @@ export class WhisperEngine {
       returnTimestamps?: boolean;
     }
   ): Promise<TranscriptionSegment[]> {
-    if (!this.pipeline) {
-      throw new Error('Whisper model not loaded. Call loadModel() first.');
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioContext = new AudioContext({ sampleRate: 16000 });
+    const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+    const audioData = audioBuffer.getChannelData(0);
+    return this.transcribePCM(audioData, options);
+  }
+
+  /**
+   * Transcribe raw 16kHz mono PCM (Float32Array, samples in [-1, 1]).
+   * This is the path used by the VAD-driven live capture — it skips Blob decoding
+   * which only worked for the first MediaRecorder chunk anyway.
+   *
+   * Calls are serialized through an internal queue, so callers can fire-and-forget
+   * speech segments without worrying about overlap.
+   */
+  transcribePCM(
+    audio: Float32Array,
+    options?: {
+      language?: string;
+      timestamp?: number;
+      returnTimestamps?: boolean;
     }
-
-    if (this.isProcessing) {
-      throw new Error('Already processing audio. Please wait.');
-    }
-
-    this.isProcessing = true;
-
-    try {
-      // Convert Blob to ArrayBuffer
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      
-      // Create audio context to decode audio
-      const audioContext = new AudioContext({ sampleRate: 16000 });
-      const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-      
-      // Get audio data as Float32Array (mono channel)
-      const audioData = audioBuffer.getChannelData(0);
-
-      // Transcribe with Whisper
-      const result = await this.pipeline(audioData, {
-        language: options?.language || 'english',
-        task: 'transcribe',
-        return_timestamps: options?.returnTimestamps ?? true,
-        chunk_length_s: 30, // Process in 30-second chunks
-        stride_length_s: 5, // 5-second overlap between chunks
-      });
-
-      // Parse result into segments
-      const segments: TranscriptionSegment[] = [];
-
-      if (result.chunks && Array.isArray(result.chunks)) {
-        // Result has timestamp chunks
-        for (let i = 0; i < result.chunks.length; i++) {
-          const chunk = result.chunks[i];
-          segments.push({
-            id: `seg_${Date.now()}_${i}`,
-            timestamp: (options?.timestamp || 0) + (chunk.timestamp?.[0] || 0),
-            text: chunk.text.trim(),
-            confidence: 0.9, // Transformers.js doesn't provide confidence scores
-          });
-        }
-      } else if (result.text) {
-        // Single text result without timestamps
-        segments.push({
-          id: `seg_${Date.now()}_0`,
-          timestamp: options?.timestamp || 0,
-          text: result.text.trim(),
-          confidence: 0.9,
-        });
+  ): Promise<TranscriptionSegment[]> {
+    const run = async (): Promise<TranscriptionSegment[]> => {
+      if (!this.pipeline) {
+        throw new Error('Whisper model not loaded. Call loadModel() first.');
       }
 
-      console.log(`Transcribed ${segments.length} segments`);
-      return segments;
-    } catch (error) {
-      console.error('Transcription error:', error);
-      throw new Error(
-        `Transcription failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    } finally {
-      this.isProcessing = false;
-    }
+      this.isProcessing = true;
+      try {
+        // VAD utterances are typically 1–10s and fit in Whisper's 30s receptive
+        // field — chunking with stride here just doubles the work. If a caller
+        // needs to transcribe long audio (>30s), they can pass chunk_length_s
+        // through options in the future.
+        //
+        // Language is intentionally omitted when the caller doesn't specify
+        // one, so Whisper auto-detects from the audio. The multilingual Xenova
+        // ports support ~99 languages; pinning it to English here would
+        // produce broken output for non-English speakers.
+        const pipelineOptions: Record<string, unknown> = {
+          task: 'transcribe',
+          return_timestamps: options?.returnTimestamps ?? true,
+        };
+        if (options?.language) {
+          pipelineOptions.language = options.language;
+        }
+        const result = await this.pipeline(audio, pipelineOptions);
+
+        const baseTs = options?.timestamp || 0;
+        const segments: TranscriptionSegment[] = [];
+
+        if (result.chunks && Array.isArray(result.chunks)) {
+          for (let i = 0; i < result.chunks.length; i++) {
+            const chunk = result.chunks[i];
+            const text = (chunk.text || '').trim();
+            if (!text) continue;
+            segments.push({
+              id: `seg_${Date.now()}_${i}`,
+              timestamp: baseTs + (chunk.timestamp?.[0] || 0),
+              text,
+              confidence: 0.9,
+            });
+          }
+        } else if (result.text) {
+          const text = result.text.trim();
+          if (text) {
+            segments.push({
+              id: `seg_${Date.now()}_0`,
+              timestamp: baseTs,
+              text,
+              confidence: 0.9,
+            });
+          }
+        }
+
+        return segments;
+      } finally {
+        this.isProcessing = false;
+      }
+    };
+
+    // Chain onto the queue; swallow upstream errors so one bad segment doesn't
+    // poison subsequent ones, but still surface this call's own error.
+    const next = this.queue.then(run, run);
+    this.queue = next.catch(() => undefined);
+    return next;
   }
 
   /**
@@ -183,6 +206,15 @@ export class WhisperEngine {
       onSegment(segment);
       await new Promise(resolve => setTimeout(resolve, 100));
     }
+  }
+
+  /**
+   * Resolves once every queued transcribePCM call has finished. Used by the
+   * recording UI to defer "complete" status until VAD-emitted utterances
+   * have all been processed.
+   */
+  async waitForIdle(): Promise<void> {
+    await this.queue.catch(() => undefined);
   }
 
   /**

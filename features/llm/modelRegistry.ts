@@ -71,32 +71,26 @@ export function getCompatibleModels(tier: DeviceTier): ModelSpec[] {
 }
 
 /**
- * Whisper models for speech-to-text transcription
+ * Whisper models for speech-to-text transcription.
+ * Speed-optimized lineup — no large variants, since the live transcription
+ * flow needs sub-second per-utterance turnaround.
  */
 export const WHISPER_MODELS: ModelSpec[] = [
-  {
-    id: 'whisper-large-v3-turbo',
-    name: 'Whisper Large V3 Turbo',
-    huggingfaceId: 'Xenova/whisper-large-v3-turbo',
-    size: 1550, // MB
-    tiers: ['mid', 'high'],
-    description: 'Fast and accurate speech recognition for capable devices',
-  },
   {
     id: 'whisper-small',
     name: 'Whisper Small',
     huggingfaceId: 'Xenova/whisper-small',
     size: 240, // MB
-    tiers: ['low', 'mid', 'high'],
-    description: 'Balanced model for most devices',
+    tiers: ['mid', 'high'],
+    description: 'Best accuracy in the speed-optimized lineup',
   },
   {
     id: 'whisper-base',
     name: 'Whisper Base',
     huggingfaceId: 'Xenova/whisper-base',
     size: 140, // MB
-    tiers: ['minimal', 'low', 'mid', 'high'],
-    description: 'Lightweight model for all devices',
+    tiers: ['low', 'mid', 'high'],
+    description: 'Balanced speed and accuracy',
   },
   {
     id: 'whisper-tiny',
@@ -104,7 +98,7 @@ export const WHISPER_MODELS: ModelSpec[] = [
     huggingfaceId: 'Xenova/whisper-tiny',
     size: 75, // MB
     tiers: ['minimal', 'low', 'mid', 'high'],
-    description: 'Smallest model, runs on any device',
+    description: 'Fastest option, runs on any device',
   },
 ];
 
@@ -114,7 +108,6 @@ export const WHISPER_MODELS: ModelSpec[] = [
 export function getRecommendedWhisperModelId(tier: DeviceTier): string {
   switch (tier) {
     case 'high':
-      return 'whisper-large-v3-turbo';
     case 'mid':
       return 'whisper-small';
     case 'low':

@@ -32,6 +32,9 @@ export interface TranscriptionState {
   summary: TranscriptionSummary | null;
   isGeneratingSummary: boolean;
 
+  // Selected transcription language (ISO 639-1 code, e.g. 'en')
+  language: string;
+
   // Error handling
   error: string | null;
 
@@ -54,6 +57,7 @@ export interface TranscriptionState {
   setSummary: (summary: TranscriptionSummary | null) => void;
   setIsGeneratingSummary: (isGenerating: boolean) => void;
 
+  setLanguage: (code: string) => void;
   setError: (error: string | null) => void;
   clearTranscription: () => void;
   reset: () => void;
@@ -80,6 +84,8 @@ export const createTranscriptionSlice: StateCreator<TranscriptionState> = (set) 
 
   summary: null,
   isGeneratingSummary: false,
+
+  language: 'en',
 
   error: null,
 
@@ -119,6 +125,9 @@ export const createTranscriptionSlice: StateCreator<TranscriptionState> = (set) 
 
   setIsGeneratingSummary: (isGenerating) => set({ isGeneratingSummary: isGenerating }),
 
+  // Language
+  setLanguage: (code) => set({ language: code }),
+
   // Error handling
   setError: (error) => set({ error }),
 
@@ -153,6 +162,7 @@ export const createTranscriptionSlice: StateCreator<TranscriptionState> = (set) 
       metadata: null,
       summary: null,
       isGeneratingSummary: false,
+      language: 'en',
       error: null,
     }),
 });

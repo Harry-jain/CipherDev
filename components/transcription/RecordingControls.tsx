@@ -1,6 +1,6 @@
 'use client';
 
-import { Mic, Square, Pause, Play } from 'lucide-react';
+import { Mic, Square, Pause, Play, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { TranscriptionProcessor } from '@/features/transcription/transcriptionProcessor';
 import { cn } from '@/lib/utils';
@@ -10,7 +10,7 @@ interface RecordingControlsProps {
   status: RecordingStatus;
   isRecording: boolean;
   isPaused: boolean;
-  duration: number; // seconds
+  duration: number;
   onStart: () => void;
   onStop: () => void;
   onPause: () => void;
@@ -19,10 +19,6 @@ interface RecordingControlsProps {
   className?: string;
 }
 
-/**
- * Recording control buttons with timer
- * Handles start, stop, pause, and resume actions
- */
 export function RecordingControls({
   status,
   isRecording,
@@ -37,112 +33,81 @@ export function RecordingControls({
 }: RecordingControlsProps) {
   const formattedDuration = TranscriptionProcessor.formatTimestamp(duration);
 
-  const getStatusText = () => {
-    switch (status) {
-      case 'idle':
-        return 'Ready to record';
-      case 'loading-model':
-        return 'Loading model...';
-      case 'ready':
-        return 'Ready to record';
-      case 'recording':
-        return isPaused ? 'Paused' : 'Recording';
-      case 'processing':
-        return 'Processing...';
-      case 'complete':
-        return 'Complete';
-      case 'error':
-        return 'Error';
-      default:
-        return 'Unknown';
-    }
-  };
+  const statusLabel = (() => {
+    if (status === 'loading-model') return 'Loading model';
+    if (status === 'processing') return 'Processing';
+    if (status === 'error') return 'Error';
+    if (isRecording) return isPaused ? 'Paused' : 'Recording';
+    if (status === 'complete') return 'Complete';
+    return 'Ready';
+  })();
 
-  const statusColor = () => {
-    if (status === 'error') return 'text-red-400';
-    if (isRecording && !isPaused) return 'text-red-400 animate-pulse';
-    if (isPaused) return 'text-yellow-400';
-    if (status === 'complete') return 'text-green-400';
-    return 'text-gray-400';
-  };
+  const dotClass = (() => {
+    if (status === 'error') return 'bg-red-500';
+    if (isRecording && !isPaused) return 'bg-red-500 animate-pulse shadow-[0_0_10px_rgba(239,68,68,0.7)]';
+    if (isPaused) return 'bg-yellow-400';
+    if (status === 'complete') return 'bg-green-500';
+    if (status === 'loading-model' || status === 'processing') return 'bg-blue-400 animate-pulse';
+    return 'bg-gray-500';
+  })();
 
   return (
-    <div className={cn('space-y-4', className)}>
-      {/* Status and Timer */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className={cn('w-3 h-3 rounded-full', statusColor().replace('text-', 'bg-'))} />
-          <span className={cn('text-sm font-medium', statusColor())}>
-            {getStatusText()}
-          </span>
-        </div>
-        
-        {isRecording && (
-          <div className="text-2xl font-mono font-bold text-gray-100">
+    <div className={cn('flex items-center justify-between gap-6', className)}>
+      {/* Left: status + timer */}
+      <div className="flex items-center gap-4 min-w-0">
+        <div className={cn('h-3 w-3 rounded-full flex-shrink-0', dotClass)} />
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wider text-gray-500 font-medium">
+            {statusLabel}
+          </p>
+          <p className="text-3xl font-mono font-semibold text-gray-100 tabular-nums leading-tight">
             {formattedDuration}
-          </div>
-        )}
+          </p>
+        </div>
       </div>
 
-      {/* Control Buttons */}
-      <div className="flex items-center gap-3">
+      {/* Right: controls */}
+      <div className="flex items-center gap-2 flex-shrink-0">
         {!isRecording ? (
-          // Start Recording Button
           <Button
             onClick={onStart}
             disabled={disabled || status === 'loading-model'}
             size="lg"
-            className="flex-1 bg-red-600 hover:bg-red-700 text-white"
+            className="bg-red-600 hover:bg-red-700 text-white gap-2 px-6"
           >
-            <Mic className="h-5 w-5 mr-2" />
+            {status === 'loading-model' ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Mic className="h-5 w-5" />
+            )}
             Start Recording
           </Button>
         ) : (
           <>
-            {/* Pause/Resume Button */}
             <Button
               onClick={isPaused ? onResume : onPause}
               disabled={disabled}
-              size="lg"
+              size="md"
               variant="secondary"
-              className="flex-1"
+              className="gap-2"
+              title={isPaused ? 'Resume' : 'Pause'}
             >
-              {isPaused ? (
-                <>
-                  <Play className="h-5 w-5 mr-2" />
-                  Resume
-                </>
-              ) : (
-                <>
-                  <Pause className="h-5 w-5 mr-2" />
-                  Pause
-                </>
-              )}
+              {isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+              <span className="hidden sm:inline">{isPaused ? 'Resume' : 'Pause'}</span>
             </Button>
-
-            {/* Stop Button */}
             <Button
               onClick={onStop}
               disabled={disabled}
-              size="lg"
+              size="md"
               variant="danger"
-              className="flex-1"
+              className="gap-2"
             >
-              <Square className="h-5 w-5 mr-2" />
-              Stop Recording
+              <Square className="h-4 w-4 fill-current" />
+              Stop
             </Button>
           </>
         )}
       </div>
-
-      {/* Helper text */}
-      {!isRecording && status === 'ready' && (
-        <p className="text-xs text-gray-500 text-center">
-          Click "Start Recording" to begin transcribing your meeting
-        </p>
-      )}
     </div>
   );
 }
-
-// Made with Bob

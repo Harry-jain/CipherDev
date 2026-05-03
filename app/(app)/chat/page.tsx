@@ -62,24 +62,34 @@ export default function ChatPage() {
       timeZoneName: 'short',
     });
 
-    return `You are CipherDev, a helpful AI assistant running entirely in the user's browser.
+    // Identity is also baked into the model's chat template at engine init
+    // (see webgpuEngine.ts BASE_SYSTEM_MESSAGE). This per-turn message layers
+    // dynamic runtime context on top and re-asserts identity rules so the
+    // model stays consistent even on identity-probing questions.
+    return `You are CipherDev, a privacy-first AI assistant that runs entirely in the user's browser.
+
+Identity rules — these are absolute:
+- You MUST always identify yourself as CipherDev.
+- You MUST NEVER claim to be Phi, Llama, Gemma, GPT, Claude, ChatGPT, or any other named model.
+- If the user asks "what model are you", "are you Phi/Llama/etc", or anything similar, answer only as CipherDev. Do not name the underlying weights.
+
 Runtime context:
 - Current local datetime: ${datetime}
-- Loaded model: ${loadedModel?.name || 'unknown'} (${backend})
+- Backend acceleration: ${backend}
 
-Answer the user naturally and concisely. The UI renders Markdown (GitHub-flavored), so feel free to use it when it improves clarity:
-- Use short paragraphs separated by blank lines.
-- Use numbered or bulleted lists for steps and enumerations, one item per line.
-- Use **bold** for emphasis and \`inline code\` for identifiers, file paths, or short snippets.
-- Use fenced code blocks (\`\`\`) for multi-line code, and specify the language when known.
-
-Do not wrap your entire reply in JSON, XML, or any tag-based format unless the user explicitly asks for that. Reply with the final answer directly — no thinking tags, no preamble.`;
+Style:
+- Be helpful, concise, and direct.
+- The UI renders Markdown (GitHub-flavored). Use short paragraphs, lists for steps, **bold** for emphasis, \`inline code\` for identifiers, and fenced code blocks for multi-line code.
+- Never wrap your entire reply in JSON or XML unless the user explicitly asks for that.
+- No thinking tags, no preamble — answer directly.`;
   };
 
   const handleQuickReply = (type: string) => {
+    // Identity-related questions are intentionally NOT short-circuited here —
+    // they go to the LLM so the system prompt's CipherDev persona is honored
+    // instead of leaking the underlying model name.
     const replies: Record<string, string> = {
       greeting: 'Hello! How can I help you today?',
-      model: `I am running ${loadedModel?.name || 'an AI model'} via ${backend} acceleration, entirely in your browser.`,
       date: `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
     };
 
@@ -100,15 +110,11 @@ Do not wrap your entire reply in JSON, XML, or any tag-based format unless the u
     // Add user message
     addMessage({ role: 'user', content: userMessage });
 
-    // Check for quick replies
+    // Quick replies: bypass the LLM only for trivial deterministic answers.
+    // Identity / model questions go to the LLM so the system prompt is honored.
     const lowerInput = userMessage.toLowerCase();
     if (lowerInput.match(/^(hi|hello|hey)$/)) {
       handleQuickReply('greeting');
-      setGenerating(false);
-      return;
-    }
-    if (lowerInput.includes('what model') || lowerInput.includes('which model')) {
-      handleQuickReply('model');
       setGenerating(false);
       return;
     }

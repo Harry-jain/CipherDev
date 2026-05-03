@@ -1,339 +1,226 @@
 import type { MicVAD } from '@ricky0123/vad-web';
-import type { AudioChunk, VADEvent } from './types';
+import type { VADEvent } from './types';
 
 /**
- * Audio capture with Voice Activity Detection (VAD)
- * Handles microphone access, recording, and speech detection
+ * VAD-driven audio capture.
+ *
+ * Uses @ricky0123/vad-web to detect speech utterances and emit raw 16kHz mono
+ * PCM (Float32Array) per utterance. This replaces the previous MediaRecorder
+ * chunking approach, which was broken because chunks 2+ lacked WebM headers
+ * and failed to decode.
+ *
+ * VAD assets (silero_vad_legacy.onnx, vad.worklet.bundle.min.js, ort wasm) are
+ * served from /public/ at the site root.
  */
 export class AudioCapture {
-  private mediaRecorder: MediaRecorder | null = null;
-  private audioStream: MediaStream | null = null;
   private vad: MicVAD | null = null;
-  private audioChunks: Blob[] = [];
-  private isRecording: boolean = false;
-  private isPaused: boolean = false;
-  private recordingStartTime: number = 0;
-  private pausedDuration: number = 0;
-  private lastPauseTime: number = 0;
-  
+  private audioStream: MediaStream | null = null;
+  private analyserContext: AudioContext | null = null;
+  private analyserRaf: number | null = null;
+
+  private isRecording = false;
+  private isPaused = false;
+  private recordingStartTime = 0;
+  private pausedDuration = 0;
+  private lastPauseTime = 0;
+
   // Callbacks
   private onSpeechStartCallback?: (event: VADEvent) => void;
   private onSpeechEndCallback?: (event: VADEvent) => void;
   private onAudioLevelCallback?: (level: number) => void;
-  private onDataAvailableCallback?: (chunk: AudioChunk) => void;
+  private onSpeechAudioCallback?: (audio: Float32Array, timestamp: number) => void;
 
   /**
-   * Initialize audio capture and VAD
+   * Request mic permission and initialize VAD.
    */
   async initialize(): Promise<void> {
-    try {
-      // Request microphone permission
-      this.audioStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+    this.audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        sampleRate: 16000,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
 
-      console.log('Microphone access granted');
+    const { MicVAD } = await import('@ricky0123/vad-web');
+    const sharedStream = this.audioStream;
 
-      // Initialize VAD
-      await this.initializeVAD();
+    this.vad = await MicVAD.new({
+      // Reuse the stream we already requested so the analyser and VAD see the
+      // same audio and the user only sees one mic permission prompt.
+      getStream: async () => sharedStream,
+      pauseStream: async () => {},
+      resumeStream: async () => sharedStream,
+      // Assets are copied into /public during the build.
+      baseAssetPath: '/',
+      onnxWASMBasePath: '/',
+      model: 'legacy',
+      startOnLoad: false,
 
-      console.log('Audio capture initialized');
-    } catch (error) {
-      console.error('Failed to initialize audio capture:', error);
-      throw new Error(
-        `Failed to access microphone: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
+      // Tuned for live meeting transcription:
+      // - Higher thresholds reject keyboard taps / HVAC noise that would
+      //   otherwise trigger spurious Whisper inference calls.
+      // - Shorter redemption (was 1400ms default) cuts the silent-pause-before
+      //   -firing in half, so transcripts feel snappier. A long thinking pause
+      //   may split an utterance in two — acceptable tradeoff for live UX.
+      positiveSpeechThreshold: 0.5,
+      negativeSpeechThreshold: 0.35,
+      redemptionMs: 700,
+
+      onSpeechStart: () => {
+        this.onSpeechStartCallback?.({
+          type: 'speech-start',
+          timestamp: this.getCurrentTimestamp(),
+          audioLevel: 0.8,
+        });
+      },
+      onSpeechEnd: (audio: Float32Array) => {
+        const timestamp = this.getCurrentTimestamp();
+        this.onSpeechEndCallback?.({
+          type: 'speech-end',
+          timestamp,
+          audioLevel: 0.2,
+        });
+        // Hand the raw PCM to whoever is listening (typically the page, which
+        // forwards it to WhisperEngine.transcribePCM).
+        this.onSpeechAudioCallback?.(audio, timestamp);
+      },
+      onVADMisfire: () => {
+        // Speech start was detected but the segment was too short — ignore.
+      },
+    } as any);
   }
 
-  /**
-   * Initialize Voice Activity Detection
-   */
-  private async initializeVAD(): Promise<void> {
-    try {
-      const { MicVAD } = await import('@ricky0123/vad-web');
-
-      this.vad = await MicVAD.new({
-        onSpeechStart: () => {
-          const event: VADEvent = {
-            type: 'speech-start',
-            timestamp: this.getCurrentTimestamp(),
-            audioLevel: 0.8,
-          };
-          this.onSpeechStartCallback?.(event);
-          console.log('Speech detected');
-        },
-        onSpeechEnd: () => {
-          const event: VADEvent = {
-            type: 'speech-end',
-            timestamp: this.getCurrentTimestamp(),
-            audioLevel: 0.2,
-          };
-          this.onSpeechEndCallback?.(event);
-          console.log('Speech ended');
-        },
-        onVADMisfire: () => {
-          console.log('VAD misfire (false positive)');
-        },
-        positiveSpeechThreshold: 0.8,
-        negativeSpeechThreshold: 0.5,
-        minSpeechFrames: 3,
-        redemptionFrames: 8,
-      } as any); // Type assertion for compatibility
-
-      console.log('VAD initialized');
-    } catch (error) {
-      console.error('Failed to initialize VAD:', error);
-      // VAD is optional, continue without it
-      console.warn('Continuing without VAD');
-    }
-  }
-
-  /**
-   * Start recording audio
-   */
   async startRecording(): Promise<void> {
-    if (!this.audioStream) {
+    if (!this.vad || !this.audioStream) {
       throw new Error('Audio capture not initialized. Call initialize() first.');
     }
+    if (this.isRecording) return;
 
-    if (this.isRecording) {
-      console.warn('Already recording');
-      return;
-    }
+    this.recordingStartTime = Date.now();
+    this.pausedDuration = 0;
+    this.isRecording = true;
+    this.isPaused = false;
 
-    try {
-      // Create MediaRecorder
-      const mimeType = this.getSupportedMimeType();
-      this.mediaRecorder = new MediaRecorder(this.audioStream, {
-        mimeType,
-        audioBitsPerSecond: 128000,
-      });
-
-      // Reset state
-      this.audioChunks = [];
-      this.recordingStartTime = Date.now();
-      this.pausedDuration = 0;
-      this.isRecording = true;
-      this.isPaused = false;
-
-      // Handle data available
-      this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          this.audioChunks.push(event.data);
-          
-          // Emit chunk for real-time processing
-          if (this.onDataAvailableCallback) {
-            const chunk: AudioChunk = {
-              blob: event.data,
-              timestamp: this.getCurrentTimestamp(),
-              duration: event.data.size / (128000 / 8), // Approximate duration
-            };
-            this.onDataAvailableCallback(chunk);
-          }
-        }
-      };
-
-      // Start recording with timeslice for real-time chunks
-      this.mediaRecorder.start(5000); // 5-second chunks
-
-      // Start VAD if available
-      if (this.vad) {
-        this.vad.start();
-      }
-
-      // Start audio level monitoring
-      this.startAudioLevelMonitoring();
-
-      console.log('Recording started');
-    } catch (error) {
-      console.error('Failed to start recording:', error);
-      throw new Error(
-        `Failed to start recording: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
-    }
+    await this.vad.start();
+    this.startAudioLevelMonitoring();
   }
 
   /**
-   * Stop recording and return audio blob
+   * Stop recording. There is no final blob to transcribe — every utterance has
+   * already been emitted via onSpeechEnd. Returns an empty Blob for backwards
+   * compatibility with the previous signature.
    */
   async stopRecording(): Promise<Blob> {
-    if (!this.mediaRecorder || !this.isRecording) {
-      throw new Error('Not currently recording');
-    }
+    if (!this.isRecording) return new Blob([]);
 
-    return new Promise((resolve, reject) => {
-      if (!this.mediaRecorder) {
-        reject(new Error('MediaRecorder not available'));
-        return;
-      }
-
-      this.mediaRecorder.onstop = () => {
-        try {
-          const mimeType = this.getSupportedMimeType();
-          const audioBlob = new Blob(this.audioChunks, { type: mimeType });
-          
-          this.isRecording = false;
-          this.isPaused = false;
-          
-          // Stop VAD
-          if (this.vad) {
-            this.vad.pause();
-          }
-
-          console.log('Recording stopped, blob size:', audioBlob.size);
-          resolve(audioBlob);
-        } catch (error) {
-          reject(error);
-        }
-      };
-
-      this.mediaRecorder.stop();
-    });
-  }
-
-  /**
-   * Pause recording
-   */
-  pauseRecording(): void {
-    if (!this.mediaRecorder || !this.isRecording || this.isPaused) {
-      return;
-    }
-
-    this.mediaRecorder.pause();
-    this.isPaused = true;
-    this.lastPauseTime = Date.now();
-
-    if (this.vad) {
-      this.vad.pause();
-    }
-
-    console.log('Recording paused');
-  }
-
-  /**
-   * Resume recording
-   */
-  resumeRecording(): void {
-    if (!this.mediaRecorder || !this.isRecording || !this.isPaused) {
-      return;
-    }
-
-    this.mediaRecorder.resume();
-    this.pausedDuration += Date.now() - this.lastPauseTime;
+    this.isRecording = false;
     this.isPaused = false;
 
     if (this.vad) {
-      this.vad.start();
+      await this.vad.pause();
     }
+    this.stopAudioLevelMonitoring();
 
-    console.log('Recording resumed');
+    return new Blob([]);
   }
 
-  /**
-   * Get current timestamp relative to recording start
-   */
+  pauseRecording(): void {
+    if (!this.isRecording || this.isPaused) return;
+    this.isPaused = true;
+    this.lastPauseTime = Date.now();
+    this.vad?.pause();
+    this.stopAudioLevelMonitoring();
+  }
+
+  resumeRecording(): void {
+    if (!this.isRecording || !this.isPaused) return;
+    this.pausedDuration += Date.now() - this.lastPauseTime;
+    this.isPaused = false;
+    this.vad?.start();
+    this.startAudioLevelMonitoring();
+  }
+
   private getCurrentTimestamp(): number {
     if (!this.isRecording) return 0;
-    const elapsed = Date.now() - this.recordingStartTime - this.pausedDuration;
-    return elapsed / 1000; // Convert to seconds
+    // While paused, freeze the clock at the moment pause was hit so the UI
+    // timer (which polls this) stops incrementing until resume.
+    const now = this.isPaused ? this.lastPauseTime : Date.now();
+    const elapsed = now - this.recordingStartTime - this.pausedDuration;
+    return elapsed / 1000;
   }
 
-  /**
-   * Start monitoring audio levels
-   */
   private startAudioLevelMonitoring(): void {
-    if (!this.audioStream) return;
+    if (!this.audioStream || this.analyserRaf !== null) return;
 
     try {
-      const audioContext = new AudioContext();
-      const source = audioContext.createMediaStreamSource(this.audioStream);
-      const analyser = audioContext.createAnalyser();
+      const ctx = new AudioContext();
+      const source = ctx.createMediaStreamSource(this.audioStream);
+      const analyser = ctx.createAnalyser();
       analyser.fftSize = 256;
       source.connect(analyser);
+      this.analyserContext = ctx;
 
       const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-      const updateLevel = () => {
-        if (!this.isRecording || this.isPaused) return;
-
+      const tick = () => {
+        if (!this.isRecording || this.isPaused) {
+          this.analyserRaf = null;
+          return;
+        }
         analyser.getByteFrequencyData(dataArray);
-        const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
-        const level = average / 255; // Normalize to 0-1
-
-        this.onAudioLevelCallback?.(level);
-
-        requestAnimationFrame(updateLevel);
+        const avg = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        this.onAudioLevelCallback?.(avg / 255);
+        this.analyserRaf = requestAnimationFrame(tick);
       };
-
-      updateLevel();
+      this.analyserRaf = requestAnimationFrame(tick);
     } catch (error) {
       console.error('Failed to start audio level monitoring:', error);
     }
   }
 
-  /**
-   * Get supported MIME type for recording
-   */
-  private getSupportedMimeType(): string {
-    const types = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-    ];
-
-    for (const type of types) {
-      if (MediaRecorder.isTypeSupported(type)) {
-        return type;
-      }
+  private stopAudioLevelMonitoring(): void {
+    if (this.analyserRaf !== null) {
+      cancelAnimationFrame(this.analyserRaf);
+      this.analyserRaf = null;
     }
-
-    return 'audio/webm'; // Fallback
+    if (this.analyserContext) {
+      this.analyserContext.close().catch(() => undefined);
+      this.analyserContext = null;
+    }
   }
 
-  /**
-   * Register callback for speech start events
-   */
   onSpeechStart(callback: (event: VADEvent) => void): void {
     this.onSpeechStartCallback = callback;
   }
 
-  /**
-   * Register callback for speech end events
-   */
   onSpeechEnd(callback: (event: VADEvent) => void): void {
     this.onSpeechEndCallback = callback;
   }
 
-  /**
-   * Register callback for audio level updates
-   */
   onAudioLevel(callback: (level: number) => void): void {
     this.onAudioLevelCallback = callback;
   }
 
   /**
-   * Register callback for data available events
+   * Receive raw 16kHz mono PCM for each detected speech utterance.
+   * Pass the Float32Array directly to WhisperEngine.transcribePCM().
    */
-  onDataAvailable(callback: (chunk: AudioChunk) => void): void {
-    this.onDataAvailableCallback = callback;
+  onSpeechAudio(callback: (audio: Float32Array, timestamp: number) => void): void {
+    this.onSpeechAudioCallback = callback;
   }
 
   /**
-   * Get recording status
+   * Kept for backwards compatibility with the previous chunk-based API. The
+   * VAD path no longer emits raw chunks — use onSpeechAudio instead.
    */
-  getStatus(): {
-    isRecording: boolean;
-    isPaused: boolean;
-    duration: number;
-  } {
+  onDataAvailable(_callback: unknown): void {
+    // no-op
+  }
+
+  getStatus(): { isRecording: boolean; isPaused: boolean; duration: number } {
     return {
       isRecording: this.isRecording,
       isPaused: this.isPaused,
@@ -341,12 +228,8 @@ export class AudioCapture {
     };
   }
 
-  /**
-   * Cleanup and release resources
-   */
   async cleanup(): Promise<void> {
-    // Stop recording if active
-    if (this.isRecording && this.mediaRecorder) {
+    if (this.isRecording) {
       try {
         await this.stopRecording();
       } catch (error) {
@@ -354,26 +237,19 @@ export class AudioCapture {
       }
     }
 
-    // Stop VAD
     if (this.vad) {
-      this.vad.destroy();
+      await this.vad.destroy();
       this.vad = null;
     }
 
-    // Stop audio stream
+    this.stopAudioLevelMonitoring();
+
     if (this.audioStream) {
-      this.audioStream.getTracks().forEach(track => track.stop());
+      this.audioStream.getTracks().forEach(t => t.stop());
       this.audioStream = null;
     }
 
-    // Clear state
-    this.mediaRecorder = null;
-    this.audioChunks = [];
     this.isRecording = false;
     this.isPaused = false;
-
-    console.log('Audio capture cleaned up');
   }
 }
-
-// Made with Bob

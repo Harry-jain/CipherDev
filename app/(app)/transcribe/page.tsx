@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
-import { AlertCircle, Sparkles } from 'lucide-react';
+import { useEffect, useMemo, useState, useRef } from 'react';
+import { AlertCircle, Sparkles, Mic, FileText, Clock, Languages } from 'lucide-react';
 import { useAppStore } from '@/store/useAppStore';
 import { getWhisperEngine } from '@/features/transcription/whisperEngine';
 import { AudioCapture } from '@/features/transcription/audioCapture';
@@ -17,6 +17,11 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import type { TranscriptionExport } from '@/features/transcription/types';
+import {
+  WHISPER_LANGUAGES,
+  getWhisperLanguageByCode,
+} from '@/features/transcription/whisperLanguages';
+import { cn } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,6 +58,9 @@ export default function TranscribePage() {
     setIsGeneratingSummary,
     setError,
     clearTranscription,
+    // Language
+    language,
+    setLanguage,
     // Hardware state
     deviceProfile,
     // LLM state
@@ -106,28 +114,21 @@ export default function TranscribePage() {
         setAudioLevel(level);
       });
 
-      // Set up VAD callbacks
-      audioCapture.onSpeechStart(() => {
-        console.log('Speech started');
-      });
+      // Snapshot the language at recording start so changing the dropdown
+      // mid-session doesn't fragment the transcript.
+      const sessionLanguage =
+        getWhisperLanguageByCode(language)?.whisperName ?? 'english';
 
-      audioCapture.onSpeechEnd(() => {
-        console.log('Speech ended');
-      });
-
-      // Set up data available callback for real-time transcription
-      audioCapture.onDataAvailable(async (chunk) => {
+      // VAD-driven: each detected utterance is delivered as raw 16kHz PCM and
+      // fed straight to Whisper. WhisperEngine internally serializes calls.
+      audioCapture.onSpeechAudio(async (audio, timestamp) => {
         try {
-          // Transcribe audio chunk
-          const newSegments = await whisperEngine.transcribe(chunk.blob, {
-            timestamp: chunk.timestamp,
+          const newSegments = await whisperEngine.transcribePCM(audio, {
+            timestamp,
             returnTimestamps: true,
+            language: sessionLanguage,
           });
-
-          // Add segments to state
-          newSegments.forEach((segment) => {
-            addSegment(segment);
-          });
+          newSegments.forEach((segment) => addSegment(segment));
         } catch (err) {
           console.error('Transcription error:', err);
         }
@@ -139,12 +140,11 @@ export default function TranscribePage() {
       setIsRecording(true);
       setRecordingStatus('recording');
       
-      // Set metadata
       setMetadata({
         startTime: Date.now(),
         endTime: null,
         duration: 0,
-        language: 'en',
+        language,
         whisperModel: whisperModelId || 'whisper-base',
       });
 
@@ -169,23 +169,14 @@ export default function TranscribePage() {
         clearInterval(durationIntervalRef.current);
       }
 
-      // Stop recording and get final audio
-      const audioBlob = await audioCapture.stopRecording();
-      
+      // Stop VAD. There's no final blob — every utterance was already emitted
+      // via onSpeechAudio. Drain in-flight transcriptions before reporting complete.
+      await audioCapture.stopRecording();
+
       setIsRecording(false);
       setRecordingStatus('processing');
 
-      // Transcribe final audio if any
-      if (audioBlob.size > 0) {
-        const finalSegments = await whisperEngine.transcribe(audioBlob, {
-          timestamp: recordingDuration,
-          returnTimestamps: true,
-        });
-
-        finalSegments.forEach((segment) => {
-          addSegment(segment);
-        });
-      }
+      await whisperEngine.waitForIdle();
 
       // Update metadata
       if (metadata) {
@@ -300,37 +291,45 @@ Key Points:
       }
     : null;
 
+  const wordCount = useMemo(
+    () => segments.reduce((n, s) => n + s.text.trim().split(/\s+/).filter(Boolean).length, 0),
+    [segments],
+  );
+
+  const showSessionPanel = whisperModelStatus === 'loaded';
+  const isLive = isRecording && !isPaused;
+
   return (
-    <div className="container mx-auto p-6 max-w-6xl space-y-6">
+    <div className="mx-auto px-6 py-8 max-w-4xl space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-100">Live Transcription</h1>
-          <p className="text-gray-400 mt-1">
-            Record and transcribe meetings with AI-powered summaries
+      <header className="flex items-end justify-between gap-4">
+        <div className="space-y-1">
+          <h1 className="text-3xl font-bold text-gray-100 tracking-tight">
+            Live Transcription
+          </h1>
+          <p className="text-sm text-gray-400">
+            Record meetings, transcribe locally, and summarize with your loaded LLM.
           </p>
         </div>
         {whisperModelId && (
-          <Badge variant="success">
+          <Badge variant="success" className="flex-shrink-0">
             {whisperModelId.replace('whisper-', 'Whisper ')}
           </Badge>
         )}
-      </div>
+      </header>
 
-      {/* Error Display */}
+      {/* Error */}
       {error && (
-        <Card className="p-4 bg-red-950/20 border-red-900/50">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="font-semibold text-red-400">Error</h3>
-              <p className="text-sm text-red-300 mt-1">{error}</p>
-            </div>
+        <div className="flex items-start gap-3 p-4 rounded-lg bg-red-950/30 border border-red-900/50">
+          <AlertCircle className="h-5 w-5 text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-red-300">Something went wrong</p>
+            <p className="text-sm text-red-400/80 mt-0.5">{error}</p>
           </div>
-        </Card>
+        </div>
       )}
 
-      {/* Model Selection */}
+      {/* Model selection */}
       {whisperModelStatus === 'idle' && (
         <WhisperModelSelector
           deviceTier={deviceProfile?.tier || null}
@@ -339,27 +338,66 @@ Key Points:
         />
       )}
 
-      {/* Model Loading */}
+      {/* Model loading */}
       {whisperModelStatus === 'loading' && (
-        <Card className="p-6">
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold text-gray-100">Loading Whisper Model</h3>
-              <span className="text-sm text-gray-400">
-                {whisperModelProgress.toFixed(0)}%
-              </span>
+        <Card className="p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="h-2 w-2 rounded-full bg-blue-400 animate-pulse" />
+              <h3 className="font-medium text-gray-100">Loading Whisper model</h3>
             </div>
-            <Progress value={whisperModelProgress} showLabel={false} />
-            <p className="text-sm text-gray-500">
-              Downloading model from HuggingFace...
-            </p>
+            <span className="text-sm text-gray-400 tabular-nums">
+              {whisperModelProgress.toFixed(0)}%
+            </span>
           </div>
+          <Progress value={whisperModelProgress} showLabel={false} />
+          <p className="text-xs text-gray-500">
+            Downloading model weights from HuggingFace…
+          </p>
         </Card>
       )}
 
-      {/* Recording Controls */}
-      {whisperModelStatus === 'loaded' && (
-        <Card className="p-6">
+      {/* Session panel: language + controls + meter in one card */}
+      {showSessionPanel && (
+        <Card
+          className={cn(
+            'p-6 space-y-5 transition-all',
+            isLive && 'ring-1 ring-red-500/30 shadow-[0_0_40px_rgba(239,68,68,0.08)]',
+          )}
+        >
+          <div className="flex items-center justify-between gap-4">
+            <label
+              htmlFor="transcription-language"
+              className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-gray-400"
+            >
+              <Languages className="h-3.5 w-3.5" />
+              Language
+            </label>
+            <select
+              id="transcription-language"
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              disabled={isRecording}
+              className={cn(
+                'min-w-[14rem] px-3 py-1.5 rounded-md text-sm',
+                'bg-gray-800 border border-gray-700 text-gray-100',
+                'focus:outline-none focus:ring-2 focus:ring-blue-500',
+                'disabled:opacity-60 disabled:cursor-not-allowed',
+              )}
+              title={
+                isRecording
+                  ? 'Stop the current recording to change language'
+                  : undefined
+              }
+            >
+              {WHISPER_LANGUAGES.map((lang) => (
+                <option key={lang.code} value={lang.code}>
+                  {lang.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <RecordingControls
             status={recordingStatus}
             isRecording={isRecording}
@@ -371,60 +409,92 @@ Key Points:
             onResume={handleResumeRecording}
             disabled={whisperModelStatus !== 'loaded'}
           />
+          <AudioVisualizer audioLevel={audioLevel} isActive={isLive} />
         </Card>
       )}
 
-      {/* Audio Visualizer */}
-      {isRecording && (
-        <AudioVisualizer
-          audioLevel={audioLevel}
-          isActive={isRecording && !isPaused}
-        />
-      )}
-
-      {/* Live Transcription */}
-      {segments.length > 0 && (
-        <Card className="p-6">
-          <h2 className="text-xl font-semibold text-gray-100 mb-4">
-            Live Transcription
-          </h2>
-          <div className="space-y-3 max-h-96 overflow-y-auto">
-            {segments.map((segment) => (
-              <TranscriptionSegment key={segment.id} segment={segment} />
-            ))}
-            {currentSegment && (
-              <div className="p-4 bg-blue-950/20 border border-blue-900/50 rounded-lg">
-                <p className="text-gray-300 italic">{currentSegment}...</p>
+      {/* Transcript */}
+      {(isRecording || segments.length > 0) && (
+        <Card className="p-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-gray-400">
+              Transcript
+            </h2>
+            {segments.length > 0 && (
+              <div className="flex items-center gap-4 text-xs text-gray-500">
+                <span className="flex items-center gap-1.5">
+                  <FileText className="h-3.5 w-3.5" />
+                  {segments.length} {segments.length === 1 ? 'segment' : 'segments'}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" />
+                  {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                </span>
               </div>
             )}
-            <div ref={transcriptEndRef} />
+          </div>
+
+          <div className="max-h-[28rem] overflow-y-auto custom-scrollbar -mx-2 px-2">
+            {segments.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+                <div
+                  className={cn(
+                    'h-10 w-10 rounded-full flex items-center justify-center',
+                    isLive
+                      ? 'bg-red-500/15 text-red-400'
+                      : 'bg-gray-800/60 text-gray-500',
+                  )}
+                >
+                  <Mic className={cn('h-5 w-5', isLive && 'animate-pulse')} />
+                </div>
+                <p className="text-sm text-gray-400">
+                  {isLive
+                    ? 'Listening… speak to see your transcript appear here.'
+                    : isPaused
+                    ? 'Paused. Resume to continue capturing speech.'
+                    : 'No speech captured yet.'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-800/40">
+                {segments.map((segment) => (
+                  <TranscriptionSegment key={segment.id} segment={segment} />
+                ))}
+                {currentSegment && (
+                  <p className="px-4 py-3 -mx-4 text-gray-400 italic">
+                    {currentSegment}…
+                  </p>
+                )}
+                <div ref={transcriptEndRef} />
+              </div>
+            )}
           </div>
         </Card>
       )}
 
-      {/* Summary Section */}
+      {/* Post-recording actions */}
       {recordingStatus === 'complete' && segments.length > 0 && (
         <div className="space-y-4">
           {!summary && !isGeneratingSummary && loadedModelId && (
-            <Card className="p-6 text-center">
-              <Button
-                onClick={handleGenerateSummary}
-                size="lg"
-                className="bg-blue-600 hover:bg-blue-700"
-              >
-                <Sparkles className="h-5 w-5 mr-2" />
-                Generate AI Summary
+            <Card className="p-5 flex items-center justify-between gap-4">
+              <div>
+                <h3 className="font-medium text-gray-100">Generate AI summary</h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Using {loadedModelId} — runs locally on your device.
+                </p>
+              </div>
+              <Button onClick={handleGenerateSummary} className="gap-2 flex-shrink-0">
+                <Sparkles className="h-4 w-4" />
+                Generate
               </Button>
-              <p className="text-sm text-gray-500 mt-2">
-                Using {loadedModelId}
-              </p>
             </Card>
           )}
 
           {!loadedModelId && (
-            <Card className="p-6 text-center">
-              <p className="text-gray-400">
-                Load an LLM model from the Models page to generate summaries
+            <Card className="p-5">
+              <p className="text-sm text-gray-400">
+                Load an LLM from the <span className="text-gray-200">Models</span> page to
+                generate a summary of this transcript.
               </p>
             </Card>
           )}
@@ -439,25 +509,24 @@ Key Points:
         </div>
       )}
 
-      {/* Export Section */}
       {recordingStatus === 'complete' && exportData && (
         <ExportMenu data={exportData} />
       )}
 
-      {/* New Recording Button */}
       {recordingStatus === 'complete' && (
-        <Card className="p-6 text-center">
+        <div className="flex justify-center pt-2">
           <Button
             onClick={() => {
               clearTranscription();
               setRecordingStatus('ready');
             }}
-            size="lg"
-            variant="secondary"
+            variant="ghost"
+            className="gap-2"
           >
-            Start New Recording
+            <Mic className="h-4 w-4" />
+            Start a new recording
           </Button>
-        </Card>
+        </div>
       )}
     </div>
   );

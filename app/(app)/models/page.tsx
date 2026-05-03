@@ -6,7 +6,7 @@ import { Cpu, Zap, HardDrive, Gauge, Download, CheckCircle } from 'lucide-react'
 import { useAppStore } from '@/store/useAppStore';
 import { detectHardware } from '@/features/hardware/detectHardware';
 import { getRecommendedModelId, MODEL_REGISTRY } from '@/features/llm/modelRegistry';
-import { getEngine } from '@/features/llm/engineFactory';
+import { getEngine, resetEngine } from '@/features/llm/engineFactory';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -28,10 +28,12 @@ export default function ModelsPage() {
     setDownloadProgress,
     setDownloadDetails,
     setLoadedModel,
+    loadedModelId,
     setError,
   } = useAppStore();
 
   const [isDetecting, setIsDetecting] = useState(true);
+  const [loadingModelId, setLoadingModelId] = useState<string | null>(null);
 
   useEffect(() => {
     async function detect() {
@@ -53,11 +55,34 @@ export default function ModelsPage() {
     detect();
   }, [setDeviceProfile, setSelectedModel, setError]);
 
-  const handleLoadModel = async (modelId: string) => {
-    try {
-      setModelStatus('downloading');
+  // Recover from stale transient state (e.g., navigated away mid-load)
+  useEffect(() => {
+    if (modelStatus === 'downloading' || modelStatus === 'compiling') {
+      setModelStatus('idle');
       setDownloadProgress(0);
       setDownloadDetails(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleLoadModel = async (modelId: string) => {
+    setLoadingModelId(modelId);
+    setSelectedModel(modelId);
+
+    try {
+      // Switching to a different model than what's currently loaded → fresh engine
+      if (loadedModelId && loadedModelId !== modelId) {
+        resetEngine();
+      }
+
+      setModelStatus('downloading');
+      setDownloadProgress(0);
+      setDownloadDetails({
+        loaded: 0,
+        total: 100,
+        percentage: 0,
+        status: 'Initializing model loader...',
+      });
       setError(null);
 
       // Get the appropriate engine
@@ -89,17 +114,25 @@ export default function ModelsPage() {
       setModelStatus('loaded');
       setLoadedModel(modelId);
       setDownloadProgress(100);
-      setDownloadDetails(null);
+      setDownloadDetails({
+        loaded: 100,
+        total: 100,
+        percentage: 100,
+        status: 'Model ready',
+      });
 
-      // Navigate to chat after a brief delay
+      // Keep the progress UI visible briefly so cached/fast loads are perceptible
       setTimeout(() => {
+        setLoadingModelId(null);
+        setDownloadDetails(null);
         router.push('/chat');
-      }, 500);
+      }, 600);
     } catch (error) {
       console.error('Model loading failed:', error);
       setModelStatus('error');
       setError(error instanceof Error ? error.message : 'Failed to load model');
       setDownloadDetails(null);
+      setLoadingModelId(null);
     }
   };
 
@@ -115,7 +148,7 @@ export default function ModelsPage() {
   const recommendedModelId = deviceProfile ? getRecommendedModelId(deviceProfile.tier) : null;
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-full p-6">
       <div className="max-w-6xl mx-auto space-y-8">
         {/* Header */}
         <div className="space-y-2">
@@ -195,7 +228,8 @@ export default function ModelsPage() {
           {MODEL_REGISTRY.map((model) => {
             const isRecommended = model.id === recommendedModelId;
             const isSelected = model.id === selectedModelId;
-            const isLoading = modelStatus === 'downloading' || modelStatus === 'compiling';
+            const isLoading = loadingModelId !== null;
+            const isThisModelLoading = loadingModelId === model.id;
             const canLoad = deviceProfile && model.tiers.includes(deviceProfile.tier);
 
             return (
@@ -236,7 +270,7 @@ export default function ModelsPage() {
                   className="w-full"
                   variant={isRecommended ? 'primary' : 'secondary'}
                 >
-                  {isLoading && isSelected ? (
+                  {isThisModelLoading ? (
                     <>
                       <Download className="h-4 w-4 mr-2 animate-pulse" />
                       Loading...
@@ -256,13 +290,17 @@ export default function ModelsPage() {
         </div>
 
         {/* Loading Progress */}
-        {(modelStatus === 'downloading' || modelStatus === 'compiling') && (
+        {loadingModelId !== null && (
           <div className="fixed bottom-0 left-0 right-0 bg-gray-900/95 border-t border-gray-800/50 backdrop-blur-sm p-4 md:pl-64">
             <div className="max-w-6xl mx-auto space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <div className="space-y-1">
                   <span className="text-gray-300 font-medium">
-                    {modelStatus === 'downloading' ? (downloadDetails?.status || 'Downloading model shards...') : 'Compiling model...'}
+                    {modelStatus === 'loaded'
+                      ? 'Model ready'
+                      : modelStatus === 'compiling'
+                      ? 'Compiling model...'
+                      : downloadDetails?.status || 'Initializing model loader...'}
                   </span>
                   {downloadDetails && downloadDetails.totalShards && (
                     <p className="text-xs text-gray-500">

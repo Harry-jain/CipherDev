@@ -193,8 +193,20 @@ code {
   @apply bg-gray-800 px-1.5 py-0.5 rounded text-sm;
 }
 
+.markdown-content pre {
+  @apply bg-gray-900/80 border border-gray-800 rounded-lg p-4 my-4 overflow-x-auto text-sm leading-relaxed;
+}
+
 .markdown-content pre code {
-  @apply bg-transparent p-0;
+  @apply bg-transparent p-0 text-gray-100;
+}
+
+.markdown-content :first-child {
+  @apply mt-0;
+}
+
+.markdown-content :last-child {
+  @apply mb-0;
 }
 
 .markdown-content blockquote {

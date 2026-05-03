@@ -12,9 +12,9 @@ export default function AppLayout({
   return (
     <Shell>
       <Sidebar />
-      <div className="md:pl-64 flex flex-col min-h-screen">
+      <div className="md:pl-64 flex flex-col h-screen">
         <Topbar />
-        <main className="flex-1">
+        <main className="flex-1 min-h-0 overflow-y-auto">
           {children}
         </main>
       </div>

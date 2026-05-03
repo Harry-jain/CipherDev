@@ -1,111 +1,67 @@
-# CipherDev - IBM Bob Session Documentation
+# IBM Bob Session Report – CipherDev
 
-This folder contains the IBM Bob privacy audit certification for the CipherDev application.
+## Project overview
+CipherDev is a privacy-first AI application built for users who cannot safely send sensitive work to third-party AI APIs. The app runs locally in the browser using WebGPU or WASM, so model inference stays on the device and no chat data needs to leave the machine. IBM Bob was used to validate the privacy story, document the build process, and generate the audit evidence that supports the proof of concept.
 
-## What is a bob_session?
+Live app: https://devcipher.vercel.app/
 
-A `bob_session` is visual proof that IBM Bob has audited the CipherDev application and certified that:
-- All LLM inference runs locally in the browser
-- No user data is transmitted to external servers
-- Only model weights are downloaded from HuggingFace
-- All chat data stays on the user's device
+## Why this folder exists
+This `bob_sessions/` folder is part of the submission evidence. It collects the IBM Bob session proof, exported screenshots, and supporting documentation so judges can see exactly how Bob contributed to the final project. The folder shows the prompt flow, the generated outputs, the audit trail, and the runtime evidence that CipherDev is designed to stay local-first.
 
-## Required Screenshots
+## Folder contents
+- `README.md` — Explains the purpose of the folder and how to read the evidence.
+- `01-landing.png` — Landing page showing the “AI that stays on your device” hero section and privacy-focused feature cards.
+- `02-hardware-detection.png` — Models page showing hardware detection, device tier, RAM, CPU cores, and the model selection grid.
+- `03-model-loading.png` — Model loading screen showing the progress bar, shard status, and loading state.
+- `04-chat-session.png` — Chat screen showing the model response to “What model are you running?”
+- `05-bob-audit-page.png` — IBM Bob audit page showing the privacy certification and verified audit logs.
+- `06-network-devtools.png` — Network tab screenshot showing only model-related HuggingFace requests and no user-data transmission.
 
-To complete the bob_session certification, take the following 6 screenshots:
+## Screenshots
 
-### 1. `01-landing.png`
-**Location:** http://localhost:3000/
-**What to capture:** 
-- Hero section with "AI that stays on your device" headline
-- Three feature cards (Privacy First, Powerful Models, Zero Telemetry)
-- Full landing page view
+### 1) Landing page
+![Landing page](./01-landing.png)
 
-### 2. `02-hardware-detection.png`
-**Location:** http://localhost:3000/models
-**What to capture:**
-- Blue hardware detection banner showing:
-  - GPU name and architecture
-  - Device tier (HIGH/MID/LOW/MINIMAL)
-  - RAM amount
-  - CPU cores
-- Model selection grid below
+### 2) Hardware detection
+![Hardware detection](./02-hardware-detection.png)
 
-### 3. `03-model-loading.png`
-**Location:** http://localhost:3000/models (while loading a model)
-**What to capture:**
-- Sticky progress bar at bottom of screen
-- Progress percentage (capture around 40-60%)
-- Shard information: "Shard X of Y (Z completed)"
-- Model card with "Loading..." state
+### 3) Model loading
+![Model loading](./03-model-loading.png)
 
-### 4. `04-chat-session.png`
-**Location:** http://localhost:3000/chat
-**What to capture:**
-- Ask the question: "What model are you running?"
-- Screenshot the AI's response showing:
-  - Model name (e.g., "Gemma 2 2B IT")
-  - Backend type (WebGPU or WASM)
-  - Token speed badge below the message
-  - Reasoning section (if enabled)
+### 4) Chat session
+![Chat session](./04-chat-session.png)
 
-### 5. `05-bob-audit-page.png`
-**Location:** http://localhost:3000/audit
-**What to capture:**
-- Full audit page showing:
-  - "IBM Bob Privacy Audit" header
-  - Green certification card with IBM Bob's statement
-  - All 3 audit log entries:
-    - Network analysis (verified safe)
-    - Storage analysis (verified safe)
-    - System analysis (verified safe)
-  - Timestamps and "Verified Safe" badges
+### 5) IBM Bob audit page
+![IBM Bob audit page](./05-bob-audit-page.png)
 
-### 6. `06-network-devtools.png`
-**Location:** Browser DevTools → Network tab (while on any page)
-**What to capture:**
-- Filter set to XHR/Fetch
-- Network requests showing ONLY:
-  - HuggingFace CDN requests (*.huggingface.co)
-  - Model shard downloads (.bin files)
-- NO other external API calls
-- Clear proof that no user data is being sent
+### 6) Network devtools
+![Network devtools](./06-network-devtools.png)
 
-## How to Take the Screenshots
+## How the files were generated
+These screenshots were captured while running the CipherDev app locally during IBM Bob-assisted development and verification. The images were saved into the `bob_sessions/` folder and included with the submission so the judge can review the evidence without needing to reproduce the setup.
 
-1. **Start the development server:**
-   ```bash
-   npm run dev
-   ```
+## Mapping Bob sessions to the solution
+- **Session 01 – Landing page and product framing:** used Bob to shape the privacy-first positioning and the user-facing story.
+- **Session 02 – Hardware detection and model selection:** used Bob to validate device-tier logic and model choice based on browser hardware.
+- **Session 03 – Model loading and shard progress:** used Bob to refine the loading state, progress display, and shard-based download experience.
+- **Session 04 – Local chat experience:** used Bob to verify that the chat response clearly shows the loaded model and browser-based backend.
+- **Session 05 – IBM Bob audit page:** used Bob to generate and validate the privacy audit narrative and verification cards.
+- **Session 06 – Network verification:** used Bob to confirm the runtime only makes model-download requests and does not transmit user content.
 
-2. **Open Chrome/Edge with DevTools:**
-   - Press F12 to open DevTools
-   - Go to Network tab for screenshot #6
+Related code for these flows lives in the main CipherDev repository, especially the app routes, UI components, and browser-side inference logic.
 
-3. **Navigate through the app:**
-   - Take screenshots in order
-   - Use a screenshot tool (Windows: Win+Shift+S, Mac: Cmd+Shift+4)
+## Bobcoin usage summary
+All Bobcoins were used collaboratively by 3 team members. If a per-session usage export is available later, it can be added below.
 
-4. **Save screenshots:**
-   - Save all 6 screenshots in this `bob_sessions/` folder
-   - Use the exact filenames listed above
+- Session 01: shared team usage
+- Session 02: shared team usage
+- Session 03: shared team usage
+- Session 04: shared team usage
+- Session 05: shared team usage
+- Session 06: shared team usage
 
-## Verification Checklist
+## License and attribution
+CipherDev uses standard open-source web and AI tooling documented in the main repository. Any third-party dependencies, model sources, and licensing notes should be tracked in the repository’s main license or attribution files. No sensitive credentials or private data are stored in this folder.
 
-Before submitting, verify:
-- [ ] All 6 screenshots are present
-- [ ] Screenshots are clear and readable
-- [ ] Network tab shows ONLY HuggingFace requests
-- [ ] Audit page shows all 3 "Verified Safe" badges
-- [ ] Chat screenshot shows model name and backend
-- [ ] Hardware detection shows device tier
-
-## IBM Bob Certification Statement
-
-Once all screenshots are captured, IBM Bob certifies that:
-
-> "CipherDev is a privacy-first AI chat application that runs entirely in the user's browser. All LLM inference is performed locally using WebGPU or WASM. No chat data, user information, or telemetry is transmitted to external servers. The only network requests are for downloading static model weights from HuggingFace's CDN. This application represents a true zero-trust, privacy-preserving AI solution."
-
-**Certified by:** IBM Bob AI Privacy Auditor  
-**Date:** May 2, 2026  
-**Application:** CipherDev v1.0.0
+## Contact
+Team contact details should be taken from the hackathon portal or the main project repository rather than hard-coded here.

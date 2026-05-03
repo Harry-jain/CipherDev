@@ -307,6 +307,6 @@ Contributions are welcome! Please read our contributing guidelines before submit
 
 ---
 
-**Made with ❤️ and with chaos also with IBM Bob 🤖🔒**
+**Made with ❤️ and chaos also with IBM Bob 🤖🔒**
 
 *CipherDev - AI that respects your privacy*

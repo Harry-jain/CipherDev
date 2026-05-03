@@ -69,9 +69,4 @@ export interface LLMMessage {
   content: string;
 }
 
-export interface ParsedResponse {
-  answer: string;
-  reasoning?: string;
-}
-
 // Made with Bob

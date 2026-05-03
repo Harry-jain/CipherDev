@@ -23,11 +23,6 @@ ${'='.repeat(80)}
       
       let text = `[${role}] ${timestamp}${tokens}${speed}\n`;
       text += `${msg.content}\n`;
-      
-      if (msg.reasoning) {
-        text += `\n[REASONING]\n${msg.reasoning}\n`;
-      }
-      
       text += '\n' + '-'.repeat(80) + '\n\n';
       
       return text;
@@ -73,7 +68,6 @@ export function exportConversationAsJson(messages: ChatMessage[], modelName?: st
       timestamp: msg.timestamp,
       tokens: msg.tokens,
       speed: msg.speed,
-      reasoning: msg.reasoning,
     })),
   };
 

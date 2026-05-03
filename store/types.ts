@@ -1,3 +1,5 @@
+import { ConversationMetadata } from '@/features/conversations/types';
+
 // ============================================================================
 // HARDWARE TYPES
 // ============================================================================
@@ -25,7 +27,6 @@ export interface ChatMessage {
   timestamp: number;
   tokens?: number;
   speed?: number; // tokens per second
-  reasoning?: string; // extracted from <reasoning> tags
 }
 
 // ============================================================================
@@ -129,6 +130,34 @@ export interface UIState {
   closeModal: () => void;
 }
 
-export type AppState = ChatState & HardwareState & ModelState & AuditState & UIState;
+// ============================================================================
+// CONVERSATION TYPES
+// ============================================================================
+
+export interface ConversationState {
+  // Metadata list (lightweight)
+  savedConversations: ConversationMetadata[];
+  
+  // Current conversation being viewed/edited
+  currentConversationId: string | null;
+  
+  // Loading states
+  isLoadingConversations: boolean;
+  isSavingConversation: boolean;
+  
+  // Actions
+  loadConversationsList: () => Promise<void>;
+  saveCurrentConversation: (title?: string) => Promise<void>;
+  loadConversation: (id: string) => Promise<void>;
+  deleteConversation: (id: string) => Promise<void>;
+  updateConversationTitle: (id: string, title: string) => Promise<void>;
+  createNewConversation: () => void;
+  autoSaveConversation: () => Promise<void>;
+}
+
+export type AppState = ChatState & HardwareState & ModelState & AuditState & UIState & ConversationState & TranscriptionState;
+
+// Import TranscriptionState from transcription slice
+import type { TranscriptionState } from './slices/transcriptionSlice';
 
 // Made with Bob

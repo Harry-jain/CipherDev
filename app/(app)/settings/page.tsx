@@ -31,13 +31,6 @@ export default function SettingsPage() {
     return 2048;
   });
   
-  const [showReasoning, setShowReasoning] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('chipherdev-show-reasoning') !== 'false';
-    }
-    return true;
-  });
-  
   const handleTemperatureChange = (value: number) => {
     setTemperature(value);
     localStorage.setItem('chipherdev-temperature', value.toString());
@@ -46,11 +39,6 @@ export default function SettingsPage() {
   const handleMaxTokensChange = (value: number) => {
     setMaxTokens(value);
     localStorage.setItem('chipherdev-max-tokens', value.toString());
-  };
-  
-  const handleShowReasoningChange = (value: boolean) => {
-    setShowReasoning(value);
-    localStorage.setItem('chipherdev-show-reasoning', value.toString());
   };
 
   const handleClearHistory = () => {
@@ -86,7 +74,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-full p-6">
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
         <div className="space-y-2">
@@ -204,26 +192,6 @@ export default function SettingsPage() {
               </p>
             </div>
 
-            <div className="flex items-center justify-between p-4 bg-gray-800/30 rounded-lg">
-              <div>
-                <h3 className="font-medium text-gray-100">Show Reasoning</h3>
-                <p className="text-sm text-gray-400 mt-1">
-                  Display Claude-style reasoning process before answers
-                </p>
-              </div>
-              <button
-                onClick={() => handleShowReasoningChange(!showReasoning)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  showReasoning ? 'bg-blue-600' : 'bg-gray-700'
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    showReasoning ? 'translate-x-6' : 'translate-x-1'
-                  }`}
-                />
-              </button>
-            </div>
           </div>
         </Card>
 

@@ -27,6 +27,13 @@ CipherDev is a fully client-side AI chat application that runs Large Language Mo
 - **Llama 3.2 3B** (1.9GB) - High quality
 - **Phi-3.5-mini** (2.2GB) - Advanced reasoning
 
+### 🎙️ **Live Meeting Transcription** (NEW!)
+- Real-time speech-to-text with Whisper AI
+- Voice Activity Detection (VAD) for optimal quality
+- AI-powered meeting summaries
+- Export to Markdown or JSON
+- 100% local processing - no audio leaves your device
+
 ### 🏥 **Health Risk Assessment**
 - Real-time health/disaster risk evaluation
 - Temperature, heart rate, and condition analysis

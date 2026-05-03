@@ -2,13 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, Cpu, Shield, Settings, Menu, X } from 'lucide-react';
+import { MessageSquare, Cpu, Shield, Settings, Menu, X, Mic } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAppStore } from '@/store/useAppStore';
 import { Button } from '@/components/ui/button';
 
 const navItems = [
   { href: '/chat', label: 'Chat', icon: MessageSquare },
+  { href: '/transcribe', label: 'Transcribe', icon: Mic },
   { href: '/models', label: 'Models', icon: Cpu },
   { href: '/audit', label: 'Privacy Audit', icon: Shield },
   { href: '/settings', label: 'Settings', icon: Settings },

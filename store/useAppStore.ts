@@ -6,6 +6,8 @@ import { createHardwareSlice } from './slices/hardwareSlice';
 import { createModelSlice } from './slices/modelSlice';
 import { createAuditSlice } from './slices/auditSlice';
 import { createUISlice } from './slices/uiSlice';
+import { createConversationSlice } from './slices/conversationSlice';
+import { createTranscriptionSlice } from './slices/transcriptionSlice';
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -15,6 +17,8 @@ export const useAppStore = create<AppState>()(
       ...createModelSlice(...a),
       ...createAuditSlice(...a),
       ...createUISlice(...a),
+      ...createConversationSlice(...a),
+      ...createTranscriptionSlice(...a),
     }),
     {
       name: 'chipherdev-storage',
@@ -25,11 +29,13 @@ export const useAppStore = create<AppState>()(
         deviceProfile: state.deviceProfile,
         selectedModelId: state.selectedModelId,
         loadedModelId: state.loadedModelId,
+        currentConversationId: state.currentConversationId,
         // Don't persist temporary states
         // isGenerating: false,
         // modelStatus: 'idle',
         // downloadProgress: 0,
         // downloadDetails: null,
+        // savedConversations: [], // Don't persist - load from IndexedDB
       }),
     }
   )

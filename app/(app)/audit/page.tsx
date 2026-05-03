@@ -38,7 +38,7 @@ export default function AuditPage() {
   };
 
   return (
-    <div className="min-h-screen p-6">
+    <div className="min-h-full p-6">
       <div className="max-w-4xl mx-auto space-y-8">
         {/* Header */}
         <div className="text-center space-y-4">

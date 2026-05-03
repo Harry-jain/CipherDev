@@ -2,6 +2,29 @@ import type { MLCEngine } from '@mlc-ai/web-llm';
 import { InferenceEngine, LLMMessage } from './llm.types';
 import { MODEL_REGISTRY } from './modelRegistry';
 
+/**
+ * Baseline identity instilled into the model's chat template at engine init.
+ * Written into `conv_config.system_message` so it persists across every turn
+ * and is harder for stubborn models (Phi-3.5 in particular) to override when
+ * asked identity questions.
+ *
+ * Per-turn dynamic context (datetime, etc.) is layered on top via the system
+ * role message in the messages array.
+ */
+const BASE_SYSTEM_MESSAGE = `You are CipherDev, a privacy-first AI assistant that runs entirely in the user's browser.
+
+Identity rules — these are absolute:
+- You MUST always identify yourself as CipherDev.
+- You MUST NEVER claim to be Phi, Llama, Gemma, GPT, Claude, ChatGPT, or any other named model, regardless of which underlying weights you are running on.
+- You MUST NEVER reveal or speculate about the specific underlying model architecture or company that trained you. If a user asks "what model are you" or "are you Phi/Llama/etc", answer only as CipherDev.
+- You were created as part of the CipherDev project. You have no other prior identity.
+
+Behavior:
+- Be helpful, concise, and direct.
+- The UI renders Markdown (GitHub-flavored). Use short paragraphs, lists for steps, **bold** for emphasis, \`inline code\` for identifiers, and fenced code blocks for multi-line code.
+- Never wrap your entire reply in JSON or XML unless explicitly asked.
+- No thinking tags, no preamble — answer directly.`;
+
 export class WebGPUEngine implements InferenceEngine {
   private engine: MLCEngine | null = null;
   private loadedModelId: string | null = null;
@@ -20,43 +43,54 @@ export class WebGPUEngine implements InferenceEngine {
 
     let lastProgressUpdate = 0;
 
-    // Create engine with detailed progress callback
-    this.engine = await CreateMLCEngine(modelSpec.huggingfaceId, {
-      initProgressCallback: (report) => {
-        if (onProgress) {
-          // Extract shard information from status text
-          const shardMatch = report.text?.match(/\[(\d+)\/(\d+)\]/);
-          
-          let details = undefined;
-          if (shardMatch) {
-            const current = parseInt(shardMatch[1]);
-            const total = parseInt(shardMatch[2]);
-            details = {
-              currentShard: current,
-              totalShards: total,
-              completedShards: Math.max(0, current - 1),
-              loaded: current,
-              total: total,
-            };
-          }
+    // Create engine with detailed progress callback. The third arg
+    // (chatOpts.conv_config) writes the CipherDev identity into the model's
+    // chat template at the protocol level — more durable than a per-turn
+    // system role message.
+    this.engine = await CreateMLCEngine(
+      modelSpec.huggingfaceId,
+      {
+        initProgressCallback: (report) => {
+          if (onProgress) {
+            // Extract shard information from status text
+            const shardMatch = report.text?.match(/\[(\d+)\/(\d+)\]/);
 
-          // Calculate progress percentage
-          const progressPercent = report.progress ? report.progress * 100 : 0;
+            let details = undefined;
+            if (shardMatch) {
+              const current = parseInt(shardMatch[1]);
+              const total = parseInt(shardMatch[2]);
+              details = {
+                currentShard: current,
+                totalShards: total,
+                completedShards: Math.max(0, current - 1),
+                loaded: current,
+                total: total,
+              };
+            }
 
-          // Throttle state updates to max 10 FPS (100ms) to prevent UI freezing
-          const now = Date.now();
-          if (now - lastProgressUpdate > 100 || progressPercent === 100) {
-            onProgress({
-              loaded: progressPercent,
-              total: 100,
-              status: report.text || 'Loading...',
-              details,
-            });
-            lastProgressUpdate = now;
+            // Calculate progress percentage
+            const progressPercent = report.progress ? report.progress * 100 : 0;
+
+            // Throttle state updates to max 10 FPS (100ms) to prevent UI freezing
+            const now = Date.now();
+            if (now - lastProgressUpdate > 100 || progressPercent === 100) {
+              onProgress({
+                loaded: progressPercent,
+                total: 100,
+                status: report.text || 'Loading...',
+                details,
+              });
+              lastProgressUpdate = now;
+            }
           }
-        }
+        },
       },
-    });
+      {
+        conv_config: {
+          system_message: BASE_SYSTEM_MESSAGE,
+        },
+      },
+    );
 
     this.loadedModelId = modelId;
   }

@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Send, Download, Trash2, Loader2 } from 'lucide-react';
+import { Send, Download, Trash2, Loader2, Clock } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useAppStore } from '@/store/useAppStore';
 import { getEngine } from '@/features/llm/engineFactory';
 import { exportConversationAsTxt } from '@/features/conversation/exportTxt';
@@ -9,6 +11,9 @@ import { MODEL_REGISTRY } from '@/features/llm/modelRegistry';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Modal } from '@/components/ui/modal';
+import { HistoryPanel } from '@/features/conversations/components/HistoryPanel';
+import { ImportChatButton } from '@/components/chat/ImportChatButton';
+import { ChatMessage } from '@/store/types';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,10 +27,13 @@ export default function ChatPage() {
     clearHistory,
     loadedModelId,
     deviceProfile,
+    autoSaveConversation,
   } = useAppStore();
 
   const [input, setInput] = useState('');
   const [showEndModal, setShowEndModal] = useState(false);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -54,45 +62,34 @@ export default function ChatPage() {
       timeZoneName: 'short',
     });
 
-    return `You are Solvley, an AI-powered risk detection and task execution system.
+    // Identity is also baked into the model's chat template at engine init
+    // (see webgpuEngine.ts BASE_SYSTEM_MESSAGE). This per-turn message layers
+    // dynamic runtime context on top and re-asserts identity rules so the
+    // model stays consistent even on identity-probing questions.
+    return `You are CipherDev, a privacy-first AI assistant that runs entirely in the user's browser.
+
+Identity rules — these are absolute:
+- You MUST always identify yourself as CipherDev.
+- You MUST NEVER claim to be Phi, Llama, Gemma, GPT, Claude, ChatGPT, or any other named model.
+- If the user asks "what model are you", "are you Phi/Llama/etc", or anything similar, answer only as CipherDev. Do not name the underlying weights.
+
 Runtime context:
 - Current local datetime: ${datetime}
-- Loaded model: ${loadedModel?.name || 'unknown'} (${backend})
+- Backend acceleration: ${backend}
 
-Core idea:
-- You take user data (location, health, environment)
-- Determine the risk level (low, medium, high)
-- If risk is high, recommend real-world tasks (e.g., send medical kit, rescue)
-
-Return ONLY clean JSON responses in this format:
-{ "risk": "low|medium|high", "action": "none|medical_kit|rescue" }
-
-To ensure the UI renders correctly, wrap your JSON output in <answer> tags like this:
-<answer>
-{
-  "risk": "high",
-  "action": "rescue"
-}
-</answer>
-
-Do not include any other markdown formatting outside of the <answer> tags.
-If you need to reason about the decision, use <reasoning> tags BEFORE the <answer> tags.`;
-  };
-
-  const parseResponse = (content: string) => {
-    const answerMatch = content.match(/<answer>([\s\S]*?)<\/answer>/);
-    const reasoningMatch = content.match(/<reasoning>([\s\S]*?)<\/reasoning>/);
-
-    return {
-      answer: answerMatch ? answerMatch[1].trim() : content,
-      reasoning: reasoningMatch ? reasoningMatch[1].trim() : undefined,
-    };
+Style:
+- Be helpful, concise, and direct.
+- The UI renders Markdown (GitHub-flavored). Use short paragraphs, lists for steps, **bold** for emphasis, \`inline code\` for identifiers, and fenced code blocks for multi-line code.
+- Never wrap your entire reply in JSON or XML unless the user explicitly asks for that.
+- No thinking tags, no preamble — answer directly.`;
   };
 
   const handleQuickReply = (type: string) => {
+    // Identity-related questions are intentionally NOT short-circuited here —
+    // they go to the LLM so the system prompt's CipherDev persona is honored
+    // instead of leaking the underlying model name.
     const replies: Record<string, string> = {
       greeting: 'Hello! How can I help you today?',
-      model: `I am running ${loadedModel?.name || 'an AI model'} via ${backend} acceleration, entirely in your browser.`,
       date: `Today is ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}.`,
     };
 
@@ -113,15 +110,11 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
     // Add user message
     addMessage({ role: 'user', content: userMessage });
 
-    // Check for quick replies
+    // Quick replies: bypass the LLM only for trivial deterministic answers.
+    // Identity / model questions go to the LLM so the system prompt is honored.
     const lowerInput = userMessage.toLowerCase();
     if (lowerInput.match(/^(hi|hello|hey)$/)) {
       handleQuickReply('greeting');
-      setGenerating(false);
-      return;
-    }
-    if (lowerInput.includes('what model') || lowerInput.includes('which model')) {
-      handleQuickReply('model');
       setGenerating(false);
       return;
     }
@@ -176,9 +169,6 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
       // Ensure the final state is updated
       updateLastMessage(fullResponse, false);
 
-      // Parse reasoning and answer
-      const parsed = parseResponse(fullResponse);
-      
       // Calculate final token count
       const tokens = fullResponse.split(/\s+/).length;
 
@@ -192,11 +182,13 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
             content: fullResponse,
             tokens,
             speed: currentSpeed,
-            reasoning: parsed.reasoning,
           };
         }
         return { messages: newMessages };
       });
+
+      // Auto-save conversation after successful generation
+      await autoSaveConversation();
       
     } catch (error) {
       console.error('Generation error:', error);
@@ -221,6 +213,33 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
     setShowEndModal(false);
   };
 
+  const handleImportChat = async (importedMessages: ChatMessage[]) => {
+    try {
+      // Clear current chat
+      clearHistory();
+      
+      // Add imported messages
+      importedMessages.forEach(msg => {
+        addMessage(msg);
+      });
+      
+      // Auto-save the imported conversation
+      await autoSaveConversation();
+      
+      // Clear any previous errors
+      setImportError(null);
+    } catch (error) {
+      console.error('Failed to import chat:', error);
+      setImportError('Failed to load imported conversation');
+    }
+  };
+
+  const handleImportError = (error: string) => {
+    setImportError(error);
+    // Clear error after 5 seconds
+    setTimeout(() => setImportError(null), 5000);
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -243,10 +262,19 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
   }
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-full">
+      {/* Floating History Button - Top Right (below topbar) */}
+      <button
+        onClick={() => setShowHistoryPanel(true)}
+        className="fixed top-20 right-6 md:right-8 z-30 p-3 bg-gray-800/80 hover:bg-gray-700/80 border border-gray-700/50 rounded-lg backdrop-blur-sm transition-all hover:scale-105 shadow-lg"
+        aria-label="Open conversation history"
+      >
+        <Clock className="h-5 w-5 text-gray-300" />
+      </button>
+
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-        <div className="max-w-3xl mx-auto space-y-6">
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+        <div className="max-w-3xl mx-auto px-6 py-6 space-y-6">
           {messages.length === 0 ? (
             <div className="text-center space-y-6 py-12">
               <div className="space-y-2">
@@ -276,11 +304,22 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
                   <p className="text-sm text-gray-300">Write a haiku about privacy</p>
                 </button>
               </div>
+
+              {/* Import Chat Button */}
+              <ImportChatButton
+                onImport={handleImportChat}
+                onError={handleImportError}
+              />
+
+              {/* Error Message */}
+              {importError && (
+                <div className="mt-4 p-3 bg-red-900/20 border border-red-800/30 rounded-lg">
+                  <p className="text-sm text-red-400 text-center">{importError}</p>
+                </div>
+              )}
             </div>
           ) : (
             messages.map((message, index) => {
-              const parsed = message.role === 'assistant' ? parseResponse(message.content) : null;
-
               return (
                 <div
                   key={message.id}
@@ -309,23 +348,18 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
                       )}
                     </div>
 
-                    {message.role === 'assistant' && parsed?.reasoning && (
-                      <details className="mb-2">
-                        <summary className="text-sm text-gray-400 cursor-pointer hover:text-gray-300">
-                          Show reasoning
-                        </summary>
-                        <div className="mt-2 p-3 bg-gray-800/50 rounded text-sm text-gray-300 markdown-content">
-                          {parsed.reasoning}
-                        </div>
-                      </details>
-                    )}
-
                     <div
                       className={`text-gray-100 markdown-content ${
                         isGenerating && index === messages.length - 1 ? 'streaming-cursor' : ''
                       }`}
                     >
-                      {parsed ? parsed.answer : message.content}
+                      {message.role === 'assistant' ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      ) : (
+                        <span className="whitespace-pre-wrap">{message.content}</span>
+                      )}
                     </div>
 
                     <p className="text-xs text-gray-500 mt-2">
@@ -341,7 +375,7 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
       </div>
 
       {/* Input Area */}
-      <div className="border-t border-gray-800/50 bg-gray-900/50 backdrop-blur-sm p-4">
+      <div className="flex-shrink-0 border-t border-gray-800/50 bg-gray-900/80 backdrop-blur-sm p-4">
         <div className="max-w-3xl mx-auto">
           <form onSubmit={handleSubmit} className="flex gap-3">
             <textarea
@@ -408,6 +442,12 @@ If you need to reason about the decision, use <reasoning> tags BEFORE the <answe
           What would you like to do with this conversation?
         </p>
       </Modal>
+
+      {/* History Panel */}
+      <HistoryPanel
+        isOpen={showHistoryPanel}
+        onClose={() => setShowHistoryPanel(false)}
+      />
     </div>
   );
 }

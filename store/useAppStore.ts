@@ -7,6 +7,7 @@ import { createModelSlice } from './slices/modelSlice';
 import { createAuditSlice } from './slices/auditSlice';
 import { createUISlice } from './slices/uiSlice';
 import { createConversationSlice } from './slices/conversationSlice';
+import { createTranscriptionSlice } from './slices/transcriptionSlice';
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -17,6 +18,7 @@ export const useAppStore = create<AppState>()(
       ...createAuditSlice(...a),
       ...createUISlice(...a),
       ...createConversationSlice(...a),
+      ...createTranscriptionSlice(...a),
     }),
     {
       name: 'chipherdev-storage',

@@ -155,6 +155,9 @@ export interface ConversationState {
   autoSaveConversation: () => Promise<void>;
 }
 
-export type AppState = ChatState & HardwareState & ModelState & AuditState & UIState & ConversationState;
+export type AppState = ChatState & HardwareState & ModelState & AuditState & UIState & ConversationState & TranscriptionState;
+
+// Import TranscriptionState from transcription slice
+import type { TranscriptionState } from './slices/transcriptionSlice';
 
 // Made with Bob

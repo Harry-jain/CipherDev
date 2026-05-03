@@ -61,7 +61,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [https://devcipher.vercel.app/](https://devcipher.vercel.app/) in your browser.
 
 ### Build for Production
 
@@ -307,6 +307,6 @@ Contributions are welcome! Please read our contributing guidelines before submit
 
 ---
 
-**Made with ❤️ and IBM Bob 🤖🔒**
+**Made with ❤️ and with chaos also with IBM Bob 🤖🔒**
 
 *CipherDev - AI that respects your privacy*

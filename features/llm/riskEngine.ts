@@ -129,23 +129,28 @@ export async function assessRiskWithWatsonx(input: RiskInput): Promise<RiskResul
 }
 
 async function fetchWatsonxToken(apiKey: string): Promise<string | null> {
-  const tokenResponse = await fetch('https://iam.cloud.ibm.com/identity/token', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      Accept: 'application/json',
-    },
-    body: `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${encodeURIComponent(apiKey)}`,
-  });
+  try {
+    const tokenResponse = await fetch('https://iam.cloud.ibm.com/identity/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
+      },
+      body: `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${encodeURIComponent(apiKey)}`,
+    });
 
-  if (!tokenResponse.ok) {
-    const errorText = await tokenResponse.text();
-    console.error('Failed to fetch Watsonx token:', tokenResponse.status, errorText);
+    if (!tokenResponse.ok) {
+      const errorText = await tokenResponse.text();
+      console.error('Failed to fetch Watsonx token:', tokenResponse.status, errorText);
+      return null;
+    }
+
+    const tokenData = (await tokenResponse.json()) as { access_token?: string };
+    return tokenData.access_token ?? null;
+  } catch (error) {
+    console.error('Watsonx token fetch failed:', error);
     return null;
   }
-
-  const tokenData = (await tokenResponse.json()) as { access_token?: string };
-  return tokenData.access_token ?? null;
 }
 
 function parseWatsonxResult(text: string): RiskResult | null {

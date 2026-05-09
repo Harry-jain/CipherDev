@@ -75,6 +75,11 @@ export async function assessRiskWithWatsonx(input: RiskInput): Promise<RiskResul
     return assessRiskRuleBased(input);
   }
 
+  if (!url.startsWith('https://')) {
+    console.warn('Watsonx URL must use HTTPS. Falling back to rule-based logic.');
+    return assessRiskRuleBased(input);
+  }
+
   try {
     const accessToken = await fetchWatsonxToken(apiKey);
     if (!accessToken) {

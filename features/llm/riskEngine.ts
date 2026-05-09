@@ -1,106 +1,178 @@
 import { RiskInput, RiskResult, RiskLevel, RiskAction } from './llm.types';
 
+export type { RiskInput, RiskResult } from './llm.types';
+
+const WATSONX_VERSION = '2023-05-29';
+const DEFAULT_WATSONX_MODEL_ID = 'ibm/granite-13b-chat-v2';
+const MEDIUM_RISK_KEYWORDS = ['diabetic', 'diabetes', 'asthma', 'cardiac'];
+
 /**
- * Assesses health and disaster risk based on input parameters
- * Uses rule-based logic with optional Watsonx AI integration
+ * Assesses health and disaster risk based on input parameters.
+ * Uses Watsonx AI if configured, falling back to rule-based logic.
  */
 export async function assessRisk(input: RiskInput): Promise<RiskResult> {
-  const { age, location, healthCondition, temperature, humidity, heartRate } = input;
+  if (process.env.WATSONX_API_KEY) {
+    return assessRiskWithWatsonx(input);
+  }
 
-  // Rule-based risk assessment logic
+  return assessRiskRuleBased(input);
+}
+
+/**
+ * Rule-based risk assessment logic (fallback).
+ */
+function assessRiskRuleBased(input: RiskInput): RiskResult {
+  const { healthCondition, temperature, heartRate } = input;
+
   let risk: RiskLevel = 'low';
   let action: RiskAction = 'none';
   let reason = '';
 
-  // Critical conditions - HIGH RISK
   if (temperature > 40) {
     risk = 'high';
     action = 'rescue';
-    reason = `Critical: Body temperature ${temperature}°C is dangerously high. Immediate medical attention required.`;
-  } else if (heartRate && heartRate > 130) {
+    reason = `Critical temperature detected (${temperature}°C). Immediate medical attention required.`;
+  } else if (heartRate !== undefined && heartRate > 130) {
     risk = 'high';
     action = 'rescue';
-    reason = `Critical: Heart rate ${heartRate} bpm is dangerously elevated. Immediate medical attention required.`;
-  }
-  // Moderate conditions - MEDIUM RISK
-  else if (temperature > 37.5 && temperature <= 40) {
+    reason = `Critical heart rate detected (${heartRate} bpm). Immediate medical attention required.`;
+  } else if (temperature > 37.5) {
     risk = 'medium';
     action = 'medical_kit';
-    reason = `Elevated temperature ${temperature}°C detected. Monitor closely and use medical kit if symptoms worsen.`;
-  } else if (hasHighRiskCondition(healthCondition)) {
+    reason = `Elevated temperature (${temperature}°C). Monitor closely and use a medical kit if symptoms worsen.`;
+  } else if (hasMediumRiskCondition(healthCondition)) {
     risk = 'medium';
     action = 'medical_kit';
-    reason = `Pre-existing condition "${healthCondition}" requires monitoring. Keep medical kit accessible.`;
-  } else if (age > 65 || age < 5) {
-    risk = 'medium';
-    action = 'medical_kit';
-    reason = `Age ${age} is in vulnerable category. Extra precautions recommended.`;
-  } else if (heartRate && (heartRate > 100 || heartRate < 50)) {
-    risk = 'medium';
-    action = 'medical_kit';
-    reason = `Heart rate ${heartRate} bpm is outside normal range. Monitor and have medical kit ready.`;
-  }
-  // Low risk - NORMAL
-  else {
+    reason = `Health condition "${healthCondition}" increases risk. Keep a medical kit accessible.`;
+  } else {
     risk = 'low';
     action = 'none';
-    reason = `All vital signs within normal range. Temperature: ${temperature}°C${heartRate ? `, Heart rate: ${heartRate} bpm` : ''}. Continue monitoring.`;
+    reason = 'Vital signs are within normal range. Continue routine monitoring.';
   }
 
-  return {
-    risk,
-    action,
-    reason,
-  };
+  return { risk, action, reason };
 }
 
 /**
- * Check if health condition contains high-risk keywords
+ * Check if health condition contains medium-risk keywords.
  */
-function hasHighRiskCondition(condition: string): boolean {
+function hasMediumRiskCondition(condition: string): boolean {
   const lowerCondition = condition.toLowerCase();
-  const highRiskKeywords = [
-    'diabetic',
-    'diabetes',
-    'asthma',
-    'cardiac',
-    'heart',
-    'hypertension',
-    'copd',
-    'respiratory',
-    'immunocompromised',
-    'cancer',
-    'kidney',
-    'liver',
-    'stroke',
-    'epilepsy',
-  ];
-
-  return highRiskKeywords.some((keyword) => lowerCondition.includes(keyword));
+  return MEDIUM_RISK_KEYWORDS.some((keyword) => lowerCondition.includes(keyword));
 }
 
 /**
- * Optional: Call Watsonx AI for advanced risk assessment
- * Falls back to rule-based logic if API is unavailable
+ * Call Watsonx AI for advanced risk assessment.
+ * Falls back to rule-based logic on error.
  */
 export async function assessRiskWithWatsonx(input: RiskInput): Promise<RiskResult> {
   const apiKey = process.env.WATSONX_API_KEY;
   const projectId = process.env.WATSONX_PROJECT_ID;
   const url = process.env.WATSONX_URL;
+  const modelId = process.env.WATSONX_MODEL_ID || DEFAULT_WATSONX_MODEL_ID;
 
-  // If Watsonx credentials not available, use rule-based logic
   if (!apiKey || !projectId || !url) {
-    return assessRisk(input);
+    return assessRiskRuleBased(input);
   }
 
   try {
-    // Watsonx API call would go here
-    // For now, fall back to rule-based logic
-    console.log('Watsonx integration not fully implemented, using rule-based logic');
-    return assessRisk(input);
+    const accessToken = await fetchWatsonxToken(apiKey);
+    if (!accessToken) {
+      return assessRiskRuleBased(input);
+    }
+
+    const prompt = [
+      'You are a health risk classifier.',
+      'Return JSON only with keys: risk (low|medium|high), action (none|medical_kit|rescue), reason (short).',
+      `Input: ${JSON.stringify(input)}`,
+    ].join('\n');
+
+    const response = await fetch(`${url}/ml/v1/text/generation?version=${WATSONX_VERSION}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model_id: modelId,
+        project_id: projectId,
+        input: prompt,
+        parameters: {
+          decoding_method: 'greedy',
+          max_new_tokens: 128,
+          temperature: 0,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Watsonx API error:', response.status, errorText);
+      return assessRiskRuleBased(input);
+    }
+
+    const payload = (await response.json()) as {
+      results?: Array<{ generated_text?: string }>;
+    };
+
+    const generated = payload.results?.[0]?.generated_text || '';
+    const parsed = parseWatsonxResult(generated);
+    if (!parsed) {
+      return assessRiskRuleBased(input);
+    }
+
+    return parsed;
   } catch (error) {
     console.error('Watsonx API error, falling back to rule-based logic:', error);
-    return assessRisk(input);
+    return assessRiskRuleBased(input);
+  }
+}
+
+async function fetchWatsonxToken(apiKey: string): Promise<string | null> {
+  const tokenResponse = await fetch('https://iam.cloud.ibm.com/identity/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: `grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey=${encodeURIComponent(apiKey)}`,
+  });
+
+  if (!tokenResponse.ok) {
+    const errorText = await tokenResponse.text();
+    console.error('Failed to fetch Watsonx token:', tokenResponse.status, errorText);
+    return null;
+  }
+
+  const tokenData = (await tokenResponse.json()) as { access_token?: string };
+  return tokenData.access_token ?? null;
+}
+
+function parseWatsonxResult(text: string): RiskResult | null {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as Partial<RiskResult>;
+    if (
+      !parsed ||
+      (parsed.risk !== 'low' && parsed.risk !== 'medium' && parsed.risk !== 'high') ||
+      (parsed.action !== 'none' && parsed.action !== 'medical_kit' && parsed.action !== 'rescue') ||
+      typeof parsed.reason !== 'string'
+    ) {
+      return null;
+    }
+
+    return {
+      risk: parsed.risk,
+      action: parsed.action,
+      reason: parsed.reason.trim(),
+    };
+  } catch (error) {
+    console.error('Failed to parse Watsonx response:', error);
+    return null;
   }
 }
 

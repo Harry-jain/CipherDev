@@ -11,7 +11,16 @@ export async function POST(request: NextRequest) {
     // Validate required fields
     const { age, location, healthCondition, temperature } = body;
 
-    if (!age || !location || !healthCondition || temperature === undefined) {
+    if (
+      age === undefined ||
+      age === null ||
+      temperature === undefined ||
+      temperature === null ||
+      typeof location !== 'string' ||
+      location.trim().length === 0 ||
+      typeof healthCondition !== 'string' ||
+      healthCondition.trim().length === 0
+    ) {
       return NextResponse.json(
         { error: 'Missing required fields: age, location, healthCondition, temperature' },
         { status: 400 }
@@ -19,14 +28,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Validate data types
-    if (typeof age !== 'number' || age < 0 || age > 150) {
+    if (typeof age !== 'number' || Number.isNaN(age) || age < 0 || age > 150) {
       return NextResponse.json(
         { error: 'Invalid age. Must be a number between 0 and 150' },
         { status: 400 }
       );
     }
 
-    if (typeof temperature !== 'number' || temperature < 20 || temperature > 50) {
+    if (typeof temperature !== 'number' || Number.isNaN(temperature) || temperature < 20 || temperature > 50) {
       return NextResponse.json(
         { error: 'Invalid temperature. Must be a number between 20 and 50 Celsius' },
         { status: 400 }
